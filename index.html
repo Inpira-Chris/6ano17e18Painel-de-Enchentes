@@ -176,6 +176,18 @@ footer a:hover{text-decoration:underline}
 .tcard-back-ico{font-size:36px;opacity:.85}
 .tcard-back-txt{font-size:12px;color:var(--txt3);font-weight:700;letter-spacing:.03em}
 
+/* ── Modo Disputa · Super Trunfo 2 jogadores ── */
+.tcard.disputa{cursor:default}
+.tcard.disputa:hover{transform:none}
+.tcard.blink{animation:tcardPisca 1s ease-in-out infinite}
+@keyframes tcardPisca{0%,100%{box-shadow:0 3px 10px rgba(0,0,0,.07),0 0 0 0 rgba(234,179,8,.55)}50%{box-shadow:0 3px 10px rgba(0,0,0,.07),0 0 0 10px rgba(234,179,8,0)}}
+@media(prefers-reduced-motion:reduce){.tcard.blink{animation:none}}
+.disputa-timer-wrap{text-align:center;margin-top:.9rem}
+.disputa-timer-lbl{font-size:12.5px;color:var(--txt3);font-weight:700;letter-spacing:.04em;margin-bottom:2px}
+.disputa-timer{font-size:42px;font-weight:900;color:var(--info-txt);font-variant-numeric:tabular-nums;line-height:1}
+.disputa-timer.urgente{color:var(--err-txt)}
+.disputa-status{text-align:center;background:var(--card2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;margin-top:.9rem;font-size:14px;color:var(--txt2);font-weight:600}
+
 .aula-cab{background:linear-gradient(135deg,#1f4a34,#2f6b4a);border-radius:var(--r2);padding:16px 18px;margin-bottom:1.1rem;color:#eef7f1;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
 .aula-cab-n{display:inline-block;background:rgba(255,255,255,.20);border-radius:20px;padding:4px 13px;font-size:11px;font-weight:900;letter-spacing:.13em;margin-bottom:9px}
 .aula-cab-t{display:block;font-size:20px;font-weight:900;line-height:1.3;margin-bottom:4px}
@@ -879,7 +891,11 @@ function initDuel(){
     <div class="map-report">
       <h3>🌊 Como funciona</h3>
       <p>Duas etapas. Na <strong>Fase 1</strong> você joga Super Trunfo com as regiões hidrográficas: as duas cartas ficam abertas, e você escolhe o atributo em que a <em>sua</em> carta vence — ou admite que ela perde em todos.<br><br>Na <strong>Fase 2</strong> você vira analista da Defesa Civil e diagnostica, olhando o corte do vale, qual evento hidrológico está acontecendo.</p>
-      <button class="btn btn-p" onclick="comecarFase(1)">🃏 Fase 1 — Super Trunfo</button>
+      <button class="btn btn-p" onclick="comecarFase(1)">🃏 Fase 1 — Super Trunfo (sozinho)</button>
+      <div style="margin-top:1.1rem;padding-top:1.1rem;border-top:1px dashed var(--border)">
+        <p style="margin-bottom:.75rem"><strong style="color:var(--txt)">⚔️ Quer jogar com um colega?</strong> No <strong>Modo Disputa</strong>, dois jogadores memorizam as cartas juntos e depois disputam às cegas, quesito por quesito.</p>
+        <button class="btn" onclick="comecarDisputa()">⚔️ Modo Disputa — 2 jogadores</button>
+      </div>
     </div>`;
 }
 
@@ -1224,6 +1240,216 @@ function renderRelatorioFinal(){
         <div class="score-line total"><div><strong>Total da Prática</strong></div><div class="sv">${practiceScore} pts</div></div>
       </div>
       <button class="btn btn-p" onclick="comecarFase(1)">🔁 Jogar novamente</button>
+    </div>`;
+}
+
+/* ═══════════════════════ MODO DISPUTA · Super Trunfo (2 jogadores) ═══════════════════════
+   Reaproveita ATRIBUTOS/CARTAS/DUELOS/valorAttr da Fase 1. Diferença: as duas
+   cartas ficam abertas por 40s para os dois jogadores memorizarem juntos;
+   quando o tempo acaba elas viram para baixo, o jogo sorteia quem escolhe o
+   quesito da rodada, e só o cartão sorteado fica piscando. Não afeta
+   fase1Score/practiceScore — é um modo à parte, para jogar em dupla. */
+let disputa=null;
+
+function comecarDisputa(){
+  sfxClick();
+  disputa={ seq:shuffleArray(DUELOS), idx:0, score1:0, score2:0, timerId:null,
+    faseRodada:null, tempo:0, cartaP1:null, cartaP2:null, jogadorVez:null,
+    ultimoQuesito:null, ultimoVencedor:null };
+  montarEsqueletoDisputa();
+  iniciarRodadaDisputa();
+}
+
+function montarEsqueletoDisputa(){
+  document.getElementById('duelWrapOuter').innerHTML=`
+    <div class="duel-instructions">⚔️ <strong>Modo Disputa — 2 jogadores</strong> — as duas cartas ficam <strong>abertas por 40 segundos</strong> para os dois jogadores memorizarem os valores juntos. Quando o tempo acabar, elas viram para baixo e o jogo sorteia quem escolhe o quesito da disputa. Só o cartão que estiver <strong>piscando</strong> pode escolher!</div>
+    <div class="duel-hud" id="disputaHud"></div>
+    <div id="disputaPalco"></div>
+    <div id="disputaAcoes"></div>
+    <div id="disputaFb"></div>`;
+}
+
+function renderDisputaHud(){
+  document.getElementById('disputaHud').innerHTML=`
+    <div class="map-chip">Rodada ${Math.min(disputa.idx+1,disputa.seq.length)}/${disputa.seq.length}</div>
+    <div class="map-chip">🔵 Jogador 1: ${disputa.score1}</div>
+    <div class="map-chip">🟠 Jogador 2: ${disputa.score2}</div>`;
+}
+
+function iniciarRodadaDisputa(){
+  const d=disputa.seq[disputa.idx];
+  const inverte=Math.random()<0.5;
+  disputa.cartaP1=inverte?d.dela:d.minha;
+  disputa.cartaP2=inverte?d.minha:d.dela;
+  disputa.faseRodada='estudo';
+  disputa.tempo=40;
+  disputa.jogadorVez=null;
+  disputa.ultimoQuesito=null;
+  renderDisputaHud();
+  renderDisputaPalco();
+  renderDisputaAcoes();
+  document.getElementById('disputaFb').innerHTML='';
+  clearInterval(disputa.timerId);
+  disputa.timerId=setInterval(tickDisputa,1000);
+}
+
+function tickDisputa(){
+  if(!disputa) return;
+  disputa.tempo--;
+  if(disputa.tempo<=0){
+    clearInterval(disputa.timerId);
+    fimEstudoDisputa();
+    return;
+  }
+  const el=document.getElementById('disputaTimer');
+  if(el){ el.textContent=disputa.tempo; el.classList.toggle('urgente',disputa.tempo<=10); }
+}
+
+function pularTimerDisputa(){
+  if(!disputa || disputa.faseRodada!=='estudo') return;
+  clearInterval(disputa.timerId);
+  fimEstudoDisputa();
+}
+
+function fimEstudoDisputa(){
+  if(!disputa) return;
+  sfxPing();
+  disputa.faseRodada='sorteio';
+  renderDisputaPalco();
+  renderDisputaAcoes();
+  setTimeout(sortearJogador,700);
+}
+
+function sortearJogador(){
+  if(!disputa || disputa.faseRodada!=='sorteio') return;
+  disputa.jogadorVez=Math.random()<0.5?1:2;
+  disputa.faseRodada='escolha';
+  sfxClick();
+  renderDisputaHud();
+  renderDisputaPalco();
+  renderDisputaAcoes();
+  farmeLiberar();
+}
+
+function cartaDisputaHTML(chave,jogadorNum,opts){
+  const c=CARTAS[chave];
+  const qual=jogadorNum===1?'mine':'theirs';
+  const rotJog=jogadorNum===1?'🔵 Jogador 1':'🟠 Jogador 2';
+  const cls=`tcard ${qual} disputa${opts.blink?' blink':''}`;
+  if(!opts.faceUp){
+    return `<div class="${cls} tcard-oculta">
+      <div class="tcard-top">${rotJog}</div>
+      <div class="tcard-back">
+        <span class="tcard-back-ico">🃏</span>
+        <span class="tcard-back-txt">${opts.blink?'👉 SUA VEZ':'CARTA VIRADA'}</span>
+      </div>
+    </div>`;
+  }
+  const attrs=ATRIBUTOS.map(a=>{
+    const v=valorAttr(chave,a.k);
+    let rowCls='attr';
+    if(opts.destaqueAttr===a.k) rowCls += opts.venceuAqui?' win':' lose';
+    return `<div class="${rowCls}"><span>${a.ico} ${a.rot}</span><span class="av">${v.toLocaleString('pt-BR')} <small style="font-weight:600;color:var(--txt3)">${a.un}</small></span></div>`;
+  }).join('');
+  return `<div class="${cls}">
+    <div class="tcard-top">${rotJog}</div>
+    <div class="tcard-nome">${c.nome}</div>
+    <div class="tcard-sub">${c.rio} · ${c.relevo} · ${c.uso}</div>
+    ${miniMapa(chave)}
+    ${attrs}
+  </div>`;
+}
+
+function renderDisputaPalco(){
+  const fr=disputa.faseRodada;
+  let opts1={faceUp:false,blink:false}, opts2={faceUp:false,blink:false};
+  if(fr==='estudo'){
+    opts1.faceUp=true; opts2.faceUp=true;
+  } else if(fr==='escolha'){
+    opts1.blink=disputa.jogadorVez===1;
+    opts2.blink=disputa.jogadorVez===2;
+  } else if(fr==='resultado'){
+    const k=disputa.ultimoQuesito;
+    opts1={faceUp:true,blink:false,destaqueAttr:k,venceuAqui:valorAttr(disputa.cartaP1,k)>valorAttr(disputa.cartaP2,k)};
+    opts2={faceUp:true,blink:false,destaqueAttr:k,venceuAqui:valorAttr(disputa.cartaP2,k)>valorAttr(disputa.cartaP1,k)};
+  }
+  document.getElementById('disputaPalco').innerHTML=`
+    <div class="duel-mesa">
+      ${cartaDisputaHTML(disputa.cartaP1,1,opts1)}
+      <div class="duel-vs">VS</div>
+      ${cartaDisputaHTML(disputa.cartaP2,2,opts2)}
+    </div>
+    ${fr==='estudo'?`<div class="disputa-timer-wrap"><div class="disputa-timer-lbl">⏱️ TEMPO PARA MEMORIZAR</div><div class="disputa-timer" id="disputaTimer">${disputa.tempo}</div></div>`:''}
+    ${fr==='sorteio'?`<div class="disputa-status">🔀 Cartas viradas! Sorteando quem escolhe o quesito...</div>`:''}
+    ${fr==='escolha'?`<div class="disputa-status">🎲 <strong>Jogador ${disputa.jogadorVez}</strong> foi sorteado! Veja o cartão piscando e escolha o quesito da disputa.</div>`:''}`;
+}
+
+function renderDisputaAcoes(){
+  const fr=disputa.faseRodada;
+  const acoesEl=document.getElementById('disputaAcoes');
+  if(fr==='estudo'){
+    acoesEl.innerHTML=`<div style="text-align:center;margin-top:.7rem"><button class="btn" onclick="pularTimerDisputa()">⏩ Virar cartas agora</button></div>`;
+  } else if(fr==='escolha'){
+    acoesEl.innerHTML=`<div class="duel-acoes">${ATRIBUTOS.map(a=>`<button class="abtn" onclick="escolherQuesitoDisputa('${a.k}')">${a.ico} ${a.rot}</button>`).join('')}</div>`;
+  } else {
+    acoesEl.innerHTML='';
+  }
+}
+
+function escolherQuesitoDisputa(k){
+  if(!farmePodeResponder()) return;
+  if(!disputa || disputa.faseRodada!=='escolha') return;
+  FARME_GUARDA.travado=true;
+  sfxClick();
+  const cartaVez = disputa.jogadorVez===1?disputa.cartaP1:disputa.cartaP2;
+  const cartaOutro = disputa.jogadorVez===1?disputa.cartaP2:disputa.cartaP1;
+  const vVez=valorAttr(cartaVez,k), vOutro=valorAttr(cartaOutro,k);
+  const ganhouQuemEscolheu = vVez>vOutro;
+  const vencedor = ganhouQuemEscolheu ? disputa.jogadorVez : (disputa.jogadorVez===1?2:1);
+  if(vencedor===1) disputa.score1++; else disputa.score2++;
+  ganhouQuemEscolheu ? sfxCorrect() : sfxWrong();
+  disputa.faseRodada='resultado';
+  disputa.ultimoQuesito=k;
+  disputa.ultimoVencedor=vencedor;
+  renderDisputaHud();
+  renderDisputaPalco();
+  renderDisputaAcoes();
+  const a=ATRIBUTOS.find(x=>x.k===k);
+  const vP1=valorAttr(disputa.cartaP1,k), vP2=valorAttr(disputa.cartaP2,k);
+  document.getElementById('disputaFb').innerHTML=
+    `<div class="feedback show ${ganhouQuemEscolheu?'ok':'err'}">
+       <strong>${a.ico} ${a.rot}:</strong> Jogador 1 tinha ${vP1.toLocaleString('pt-BR')} ${a.un} · Jogador 2 tinha ${vP2.toLocaleString('pt-BR')} ${a.un}.<br>
+       <strong>🏆 Jogador ${vencedor} venceu a rodada!</strong>
+     </div>
+     <div style="text-align:right;margin-top:.75rem"><button class="btn btn-p" onclick="avancarDisputa()">${disputa.idx>=disputa.seq.length-1?'Ver resultado final →':'Próxima rodada →'}</button></div>`;
+  farmeLiberar();
+}
+
+function avancarDisputa(){
+  if(!farmePodeResponder()) return;
+  FARME_GUARDA.travado=true;
+  sfxClick();
+  disputa.idx++;
+  if(disputa.idx>=disputa.seq.length){ finalizarDisputa(); return; }
+  iniciarRodadaDisputa();
+  farmeLiberar();
+}
+
+function finalizarDisputa(){
+  clearInterval(disputa.timerId);
+  sfxWin();
+  const s1=disputa.score1, s2=disputa.score2;
+  const resultado = s1===s2 ? '🤝 Empate!' : (s1>s2 ? '🔵 Jogador 1 venceu a disputa!' : '🟠 Jogador 2 venceu a disputa!');
+  document.getElementById('duelWrapOuter').innerHTML=`
+    <div class="map-report">
+      <h3>⚔️ Disputa encerrada!</h3>
+      <p>${resultado}</p>
+      <div style="max-width:380px;margin:1rem auto;display:flex;flex-direction:column;gap:6px">
+        <div class="score-line"><div>🔵 Jogador 1</div><div class="sv">${s1} rodada${s1===1?'':'s'}</div></div>
+        <div class="score-line"><div>🟠 Jogador 2</div><div class="sv">${s2} rodada${s2===1?'':'s'}</div></div>
+      </div>
+      <button class="btn btn-p" onclick="comecarDisputa()">🔁 Jogar novamente</button><br>
+      <button class="btn" style="margin-top:.6rem" onclick="initDuel()">← Voltar ao menu</button>
     </div>`;
 }
 
